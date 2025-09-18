@@ -3,15 +3,16 @@ from flask.views import MethodView
 from flask_smorest import Blueprint
 from sqlalchemy.exc import IntegrityError
 from ..extensions import db
-from ..models import Client, Position
+from ..models import Client, Position, PositionStatus
 from ..schemas import ClientSchema, PositionSchema
 from ..services import paginate, apply_client_filters
+from ..email_utils import send_email, get_default_notification_recipients
 
 blp = Blueprint(
     "Clients",
     "clients",
     url_prefix="/clients",
-    description="Operations related to clients and positions"
+    description="Operations related to clients and positions. When a position is closed, an optional email notification is sent."
 )
 
 @blp.route("/")
@@ -92,11 +93,29 @@ class PositionDetail(MethodView):
     @blp.arguments(PositionSchema(partial=True))
     @blp.response(200, PositionSchema)
     def patch(self, json_data, position_id: int):
-        """Update position by ID."""
+        """Update position by ID.
+
+        Notification behavior:
+        - If status changes to 'closed' and SMTP configured, sends a notification to default recipients.
+        """
         obj = Position.query.get_or_404(position_id)
+        old_status = obj.status
         for k, v in json_data.items():
             setattr(obj, k, v)
         db.session.commit()
+
+        if old_status != obj.status and obj.status == PositionStatus.CLOSED:
+            recipients = get_default_notification_recipients()
+            if recipients:
+                subject = f"Position closed: {obj.title}"
+                body = (
+                    f"A position has been closed.\n\n"
+                    f"Title: {obj.title}\n"
+                    f"Client ID: {obj.client_id}\n"
+                    f"Location: {obj.location or 'N/A'}\n"
+                )
+                send_email(subject, body, recipients)
+
         return obj
 
     @blp.response(204)
