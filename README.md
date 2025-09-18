@@ -12,4 +12,6 @@ Environment
 
 Development
 - Start backend: python run.py
+  - The API binds on 0.0.0.0:3001 by default (override with PORT env var).
+  - CORS is enabled for all origins for development convenience.
 - Generate OpenAPI: python generate_openapi.py
