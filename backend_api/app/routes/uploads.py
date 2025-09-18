@@ -24,7 +24,7 @@ class ExcelUpload(MethodView):
             "- clients: [name, industry, account_manager, status]\n"
             "- positions: [title, status, client_name, location, salary_min, salary_max]\n"
             "- candidates: [full_name, email, phone, status, source, position_title, client_name, applied_on]\n\n"
-            "Returns the number of inserted and updated rows, and a list of errors (if any)."
+            "Default max upload size is 10 MB. Returns the number of inserted and updated rows, and a list of errors (if any)."
         ),
         requestBody={
             "required": True,
@@ -46,7 +46,7 @@ class ExcelUpload(MethodView):
         },
         responses={
             400: {
-                "description": "Bad Request. Missing file or invalid file type.",
+                "description": "Bad Request. Missing file, invalid file type, or failed Excel parsing.",
             }
         },
         operationId="uploadExcelFile",
@@ -79,19 +79,37 @@ class ExcelUpload(MethodView):
         # Common Excel MIME types include:
         # - application/vnd.openxmlformats-officedocument.spreadsheetml.sheet (.xlsx)
         # - application/vnd.ms-excel (.xls)
-        if not allowed_ext and not content_type.startswith("application/vnd.openxmlformats") and "ms-excel" not in content_type:
+        # Some browsers may send application/octet-stream; allow if extension is valid
+        valid_mime = (
+            content_type.startswith("application/vnd.openxmlformats")
+            or "ms-excel" in content_type
+            or (content_type == "application/octet-stream" and allowed_ext)
+        )
+        if not (allowed_ext or valid_mime):
             blp.abort(
                 400,
                 message="Invalid file type. Please upload an Excel file with extension .xlsx or .xls under form field 'file'."
             )
 
-        # Delegate to service. It returns graceful error list if parsing fails.
-        inserted, updated, errors = process_excel_upload(f)
+        # Optional: enforce a sane max size (10 MB default)
+        max_size_bytes = 10 * 1024 * 1024
+        content_length = request.content_length or getattr(f, "content_length", None)
+        if content_length and content_length > max_size_bytes:
+            blp.abort(400, message="Uploaded file is too large. Maximum allowed size is 10 MB.")
 
-        # If parsing failed entirely, surface as 400 with details for clients
-        if inserted == 0 and updated == 0 and errors:
-            # Still return 200 by default behavior? Prefer 200 with errors array so client can show feedback.
-            # However, many clients expect 200 to indicate success path. We'll keep 200 and include errors.
+        # Ensure stream is at the beginning before reading
+        try:
+            f.stream.seek(0)
+        except Exception:
+            # If seek fails, continue; read will still attempt from current position
             pass
 
+        # Delegate to service. It returns graceful error list if parsing fails.
+        try:
+            inserted, updated, errors = process_excel_upload(f)
+        except Exception as e:
+            # Defensive: convert unexpected errors to a readable message
+            blp.abort(400, message=f"Failed to process Excel upload: {e}")
+
+        # Return 200 with details and errors array for client-side rendering
         return {"inserted": inserted, "updated": updated, "errors": errors}
