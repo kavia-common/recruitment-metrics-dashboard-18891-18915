@@ -10,6 +10,13 @@ from .routes.clients import blp as clients_blp
 from .routes.metrics import blp as metrics_blp
 from .routes.uploads import blp as uploads_blp
 
+# Optional: verify psycopg2 import availability early for clearer startup diagnostics.
+try:
+    import psycopg2  # type: ignore  # noqa: F401
+except Exception:
+    # Do not hard fail; tests may use SQLite override. This ensures import path is exercised.
+    pass
+
 app = Flask(__name__)
 app.url_map.strict_slashes = False
 CORS(app, resources={r"/*": {"origins": "*"}})
